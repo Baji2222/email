@@ -1,6 +1,5 @@
-import fs from 'node:fs/promises';
-import path from 'node:path';
 import { google } from 'googleapis';
+import { env } from '../config/env';
 
 export type EmailMessage = {
   to: string;
@@ -13,61 +12,25 @@ export interface EmailProvider {
   sendEmail(message: EmailMessage): Promise<void>;
 }
 
-/*
-|--------------------------------------------------------------------------
-| Gmail Email Provider
-|--------------------------------------------------------------------------
-| Sends real emails through the Gmail API using the OAuth credentials
-| authorized for bajivali400@gmail.com.
-|--------------------------------------------------------------------------
-*/
-
 class GmailEmailProvider implements EmailProvider {
   private async getGmailClient() {
-    const credentialsPath = path.join(
-      process.cwd(),
-      'credentials.json'
-    );
-
-    const tokenPath = path.join(
-      process.cwd(),
-      'token.json'
-    );
-
-    const credentialsFile = JSON.parse(
-      await fs.readFile(credentialsPath, 'utf8')
-    );
-
-    const tokenFile = JSON.parse(
-      await fs.readFile(tokenPath, 'utf8')
-    );
-
-    const installed = credentialsFile.installed;
-
-    if (!installed) {
+    if (
+      !env.GOOGLE_CLIENT_ID ||
+      !env.GOOGLE_CLIENT_SECRET ||
+      !env.GOOGLE_REFRESH_TOKEN
+    ) {
       throw new Error(
-        'Invalid Google OAuth credentials.json: installed credentials not found.'
-      );
-    }
-
-    if (!tokenFile.refresh_token) {
-      throw new Error(
-        'Invalid token.json: refresh_token not found.'
+        'Google Gmail OAuth environment variables are not configured.'
       );
     }
 
     const oauth2Client = new google.auth.OAuth2(
-      installed.client_id,
-      installed.client_secret,
-      installed.redirect_uris?.[0] || 'http://localhost'
+      env.GOOGLE_CLIENT_ID,
+      env.GOOGLE_CLIENT_SECRET
     );
 
     oauth2Client.setCredentials({
-      access_token: tokenFile.access_token,
-      refresh_token: tokenFile.refresh_token,
-      scope: tokenFile.scope,
-      token_type: tokenFile.token_type,
-      expiry_date: tokenFile.expiry_date,
+      refresh_token: env.GOOGLE_REFRESH_TOKEN,
     });
 
     return google.gmail({
@@ -76,10 +39,15 @@ class GmailEmailProvider implements EmailProvider {
     });
   }
 
-  private createRawMessage(message: EmailMessage): string {
-    const boundary = `----=_NetworkSwitchSupport_${Date.now()}`;
+  private createRawMessage(
+    message: EmailMessage
+  ): string {
+    const boundary =
+      `----=_NetworkSwitchSupport_${Date.now()}`;
 
-    const escapeHeader = (value: string): string => {
+    const escapeHeader = (
+      value: string
+    ): string => {
       return value
         .replace(/\r/g, '')
         .replace(/\n/g, '');
@@ -87,58 +55,71 @@ class GmailEmailProvider implements EmailProvider {
 
     const to = escapeHeader(message.to);
     const subject = escapeHeader(message.subject);
+    const from = escapeHeader(env.EMAIL_FROM);
 
-    const from = 'bajivali400@gmail.com';
-
-    let mimeMessage = '';
-
-    mimeMessage += `From: ${from}\r\n`;
-    mimeMessage += `To: ${to}\r\n`;
-    mimeMessage += `Subject: ${subject}\r\n`;
-    mimeMessage += `MIME-Version: 1.0\r\n`;
+    let rawMessage = '';
 
     if (message.html) {
-      mimeMessage += `Content-Type: multipart/alternative; boundary="${boundary}"\r\n`;
-      mimeMessage += `\r\n`;
-
-      mimeMessage += `--${boundary}\r\n`;
-      mimeMessage += `Content-Type: text/plain; charset="UTF-8"\r\n`;
-      mimeMessage += `Content-Transfer-Encoding: 8bit\r\n`;
-      mimeMessage += `\r\n`;
-      mimeMessage += `${message.text}\r\n`;
-
-      mimeMessage += `--${boundary}\r\n`;
-      mimeMessage += `Content-Type: text/html; charset="UTF-8"\r\n`;
-      mimeMessage += `Content-Transfer-Encoding: 8bit\r\n`;
-      mimeMessage += `\r\n`;
-      mimeMessage += `${message.html}\r\n`;
-
-      mimeMessage += `--${boundary}--\r\n`;
+      rawMessage = [
+        `From: ${from}`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'MIME-Version: 1.0',
+        `Content-Type: multipart/alternative; boundary="${boundary}"`,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        message.text,
+        '',
+        `--${boundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        message.html,
+        '',
+        `--${boundary}--`,
+      ].join('\r\n');
     } else {
-      mimeMessage += `Content-Type: text/plain; charset="UTF-8"\r\n`;
-      mimeMessage += `Content-Transfer-Encoding: 8bit\r\n`;
-      mimeMessage += `\r\n`;
-      mimeMessage += message.text;
+      rawMessage = [
+        `From: ${from}`,
+        `To: ${to}`,
+        `Subject: ${subject}`,
+        'MIME-Version: 1.0',
+        'Content-Type: text/plain; charset="UTF-8"',
+        'Content-Transfer-Encoding: 8bit',
+        '',
+        message.text,
+      ].join('\r\n');
     }
 
-    return Buffer.from(mimeMessage)
+    return Buffer.from(
+      rawMessage,
+      'utf8'
+    )
       .toString('base64')
       .replace(/\+/g, '-')
       .replace(/\//g, '_')
       .replace(/=+$/, '');
   }
 
-  async sendEmail(message: EmailMessage): Promise<void> {
-    const gmail = await this.getGmailClient();
+  async sendEmail(
+    message: EmailMessage
+  ): Promise<void> {
+    const gmail =
+      await this.getGmailClient();
 
-    const raw = this.createRawMessage(message);
+    const raw =
+      this.createRawMessage(message);
 
-    const result = await gmail.users.messages.send({
-      userId: 'me',
-      requestBody: {
-        raw,
-      },
-    });
+    const result =
+      await gmail.users.messages.send({
+        userId: 'me',
+        requestBody: {
+          raw,
+        },
+      });
 
     if (!result.data.id) {
       throw new Error(
@@ -146,205 +127,184 @@ class GmailEmailProvider implements EmailProvider {
       );
     }
 
-    console.log('');
-    console.log('========================================');
-    console.log('          GMAIL EMAIL SENT');
-    console.log('========================================');
-    console.log(`From    : bajivali400@gmail.com`);
-    console.log(`To      : ${message.to}`);
-    console.log(`Subject : ${message.subject}`);
-    console.log(`Message : ${result.data.id}`);
-    console.log('========================================');
-    console.log('');
+    console.log(
+      `EMAIL_SENT: ${result.data.id} From ${env.EMAIL_FROM}`
+    );
   }
 }
 
-/*
-|--------------------------------------------------------------------------
-| Email Service
-|--------------------------------------------------------------------------
-*/
+class MockEmailProvider
+  implements EmailProvider {
+  async sendEmail(
+    message: EmailMessage
+  ): Promise<void> {
+    console.log(
+      'MOCK_EMAIL:',
+      JSON.stringify(message, null, 2)
+    );
+  }
+}
 
 class EmailService {
   private provider: EmailProvider;
 
   constructor() {
-    this.provider = new GmailEmailProvider();
+    this.provider =
+      env.EMAIL_PROVIDER === 'gmail'
+        ? new GmailEmailProvider()
+        : new MockEmailProvider();
   }
 
-  async sendEmail(message: EmailMessage): Promise<void> {
-    if (!message.to) {
+  async sendEmail(
+    message: EmailMessage
+  ): Promise<void> {
+    if (!message.to?.trim()) {
       throw new Error(
-        'Recipient email address is required.'
+        'Email recipient is required.'
       );
     }
 
-    if (!message.subject) {
+    if (!message.subject?.trim()) {
       throw new Error(
         'Email subject is required.'
       );
     }
 
-    if (!message.text) {
+    if (!message.text?.trim()) {
       throw new Error(
-        'Email message is required.'
+        'Email text is required.'
       );
     }
 
-    await this.provider.sendEmail(message);
+    await this.provider.sendEmail(
+      message
+    );
   }
 
-  async sendTicketResolutionEmail(params: {
-    customerEmail: string;
-    customerName: string;
-    ticketNumber: string;
-    issueDescription: string;
-    resolution: string;
-    solvedAt: string;
-    macId?: string | null;
-    referenceNumber?: string | null;
-  }): Promise<void> {
-    const {
-      customerEmail,
-      customerName,
-      ticketNumber,
-      issueDescription,
-      resolution,
-      solvedAt,
-      macId,
-      referenceNumber,
-    } = params;
+  async sendTicketResolutionEmail(
+    params: {
+      customerEmail: string;
+      customerName?: string | null;
+      ticketNumber: string;
+      issueDescription?: string | null;
+      resolution?: string | null;
+      solvedAt?: string | null;
+      macId?: string | null;
+      referenceNumber?: string | null;
+    }
+  ): Promise<void> {
+    const customerName =
+      params.customerName?.trim() ||
+      'Customer';
+
+    const issueDescription =
+      params.issueDescription?.trim() ||
+      'Not provided';
+
+    const resolution =
+      params.resolution?.trim() ||
+      'The reported issue has been resolved.';
+
+    const solvedAt =
+      params.solvedAt?.trim() ||
+      'Not provided';
+
+    const macId =
+      params.macId?.trim() ||
+      'Not provided';
+
+    const referenceNumber =
+      params.referenceNumber?.trim() ||
+      'Not provided';
 
     const subject =
-      `Ticket ${ticketNumber} - Resolution Confirmation`;
+      `Ticket ${params.ticketNumber} - Resolution Confirmation`;
 
-    const text = `
-Dear ${customerName},
-
-This is to inform you that your support ticket has been resolved.
-
-Ticket Number : ${ticketNumber}
-Reference     : ${referenceNumber || '-'}
-MAC ID        : ${macId || '-'}
-Issue         : ${issueDescription}
-
-Resolution:
-${resolution}
-
-Resolved At:
-${solvedAt}
-
-If you continue to experience the issue or require any further assistance, please reply to this email and mention ticket number ${ticketNumber}.
-
-Regards,
-Support Team
-`;
-
-    const escapeHtml = (value: string): string => {
-      return value
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#039;');
-    };
-
-    const safeCustomerName =
-      escapeHtml(customerName);
-
-    const safeTicketNumber =
-      escapeHtml(ticketNumber);
-
-    const safeReference =
-      escapeHtml(referenceNumber || '-');
-
-    const safeMacId =
-      escapeHtml(macId || '-');
-
-    const safeIssue =
-      escapeHtml(issueDescription);
-
-    const safeResolution =
-      escapeHtml(resolution);
-
-    const safeSolvedAt =
-      escapeHtml(solvedAt);
+    const text = [
+      `Dear ${customerName},`,
+      '',
+      `Your support ticket ${params.ticketNumber} has been resolved.`,
+      '',
+      'Ticket Number:',
+      params.ticketNumber,
+      '',
+      'Reference Number:',
+      referenceNumber,
+      '',
+      'MAC ID:',
+      macId,
+      '',
+      'Issue Description:',
+      issueDescription,
+      '',
+      'Resolution:',
+      resolution,
+      '',
+      'Solved At:',
+      solvedAt,
+      '',
+      'If you experience the issue again, please reply to this email and mention your ticket number.',
+      '',
+      'Regards,',
+      'Network Switch Support',
+    ].join('\n');
 
     const html = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8">
-  <title>Ticket Resolution</title>
-</head>
+      <html>
+        <body>
+          <p>Dear ${customerName},</p>
 
-<body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
+          <p>
+            Your support ticket
+            <strong>${params.ticketNumber}</strong>
+            has been resolved.
+          </p>
 
-  <h2>Ticket Resolution Confirmation</h2>
+          <p>
+            <strong>Ticket Number:</strong><br>
+            ${params.ticketNumber}
+          </p>
 
-  <p>
-    Dear ${safeCustomerName},
-  </p>
+          <p>
+            <strong>Reference Number:</strong><br>
+            ${referenceNumber}
+          </p>
 
-  <p>
-    This is to inform you that your support ticket has been resolved.
-  </p>
+          <p>
+            <strong>MAC ID:</strong><br>
+            ${macId}
+          </p>
 
-  <table
-    cellpadding="8"
-    cellspacing="0"
-    border="1"
-    style="border-collapse: collapse;"
-  >
-    <tr>
-      <td><strong>Ticket Number</strong></td>
-      <td>${safeTicketNumber}</td>
-    </tr>
+          <p>
+            <strong>Issue Description:</strong><br>
+            ${issueDescription}
+          </p>
 
-    <tr>
-      <td><strong>Reference</strong></td>
-      <td>${safeReference}</td>
-    </tr>
+          <p>
+            <strong>Resolution:</strong><br>
+            ${resolution}
+          </p>
 
-    <tr>
-      <td><strong>MAC ID</strong></td>
-      <td>${safeMacId}</td>
-    </tr>
+          <p>
+            <strong>Solved At:</strong><br>
+            ${solvedAt}
+          </p>
 
-    <tr>
-      <td><strong>Issue</strong></td>
-      <td>${safeIssue}</td>
-    </tr>
+          <p>
+            If you experience the issue again, please reply to this email
+            and mention your ticket number.
+          </p>
 
-    <tr>
-      <td><strong>Resolved At</strong></td>
-      <td>${safeSolvedAt}</td>
-    </tr>
-  </table>
-
-  <h3>Resolution</h3>
-
-  <p>
-    ${safeResolution}
-  </p>
-
-  <p>
-    If you continue to experience the issue or require further assistance,
-    please reply to this email and mention ticket number
-    <strong>${safeTicketNumber}</strong>.
-  </p>
-
-  <p>
-    Regards,<br>
-    <strong>Support Team</strong>
-  </p>
-
-</body>
-</html>
-`;
+          <p>
+            Regards,<br>
+            Network Switch Support
+          </p>
+        </body>
+      </html>
+    `;
 
     await this.sendEmail({
-      to: customerEmail,
+      to: params.customerEmail,
       subject,
       text,
       html,

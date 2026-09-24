@@ -1,6 +1,5 @@
 import { google } from 'googleapis';
-import fs from 'fs';
-import path from 'path';
+import { env } from '../config/env';
 
 const SCOPES = [
   'https://www.googleapis.com/auth/gmail.send',
@@ -67,7 +66,7 @@ function isSupportEmail(
   body: string
 ): boolean {
   const supportMailbox =
-    (process.env.EMAIL_FROM || '')
+    env.EMAIL_FROM
       .trim()
       .toLowerCase();
 
@@ -78,13 +77,6 @@ function isSupportEmail(
     toEmail.trim().toLowerCase();
 
   // Ignore emails sent by our own support mailbox.
-  //
-  // Example:
-  // From: bajivali400@gmail.com
-  // Subject: Ticket SW-000004 - Resolution Confirmation
-  //
-  // These are outgoing emails from our system,
-  // not new customer support requests.
   if (
     supportMailbox &&
     normalizedFromEmail === supportMailbox
@@ -191,61 +183,36 @@ function extractBody(payload: any): string {
   return '';
 }
 
+/**
+ * Create the Gmail API client using
+ * production environment variables.
+ *
+ * This works both locally and on Vercel.
+ *
+ * No credentials.json or token.json
+ * files are required.
+ */
 async function getGmailClient() {
-  const credentialsPath = path.join(
-    process.cwd(),
-    'credentials.json'
-  );
-
-  const tokenPath = path.join(
-    process.cwd(),
-    'token.json'
-  );
-
-  if (!fs.existsSync(credentialsPath)) {
+  if (
+    !env.GOOGLE_CLIENT_ID ||
+    !env.GOOGLE_CLIENT_SECRET ||
+    !env.GOOGLE_REFRESH_TOKEN
+  ) {
     throw new Error(
-      'credentials.json was not found in the backend folder.'
-    );
-  }
-
-  if (!fs.existsSync(tokenPath)) {
-    throw new Error(
-      'token.json was not found in the backend folder. Run authorize-gmail.ts first.'
-    );
-  }
-
-  const credentials = JSON.parse(
-    fs.readFileSync(
-      credentialsPath,
-      'utf-8'
-    )
-  );
-
-  const installed =
-    credentials.installed ||
-    credentials.web;
-
-  if (!installed) {
-    throw new Error(
-      'Invalid Google OAuth credentials.json format.'
+      'Google Gmail OAuth environment variables are not configured.'
     );
   }
 
   const oauth2Client =
     new google.auth.OAuth2(
-      installed.client_id,
-      installed.client_secret,
-      installed.redirect_uris?.[0]
+      env.GOOGLE_CLIENT_ID,
+      env.GOOGLE_CLIENT_SECRET
     );
 
-  const token = JSON.parse(
-    fs.readFileSync(
-      tokenPath,
-      'utf-8'
-    )
-  );
-
-  oauth2Client.setCredentials(token);
+  oauth2Client.setCredentials({
+    refresh_token:
+      env.GOOGLE_REFRESH_TOKEN,
+  });
 
   return google.gmail({
     version: 'v1',
