@@ -24,6 +24,108 @@ function getHeader(
   return header?.value?.trim() || '';
 }
 
+/**
+ * Extract only the email address from a Gmail header.
+ *
+ * Example:
+ * "Dudekula Bajivali <bajivali2222@gmail.com>"
+ * becomes:
+ * "bajivali2222@gmail.com"
+ */
+function extractEmailAddress(
+  headerValue: string
+): string {
+  const match = headerValue.match(
+    /<\s*([^<>@\s]+@[^<>@\s]+)\s*>/
+  );
+
+  if (match) {
+    return match[1].trim().toLowerCase();
+  }
+
+  return headerValue
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Check whether this email looks like a
+ * Network Switch Support email.
+ *
+ * This prevents unrelated inbox emails such as:
+ * - LinkedIn
+ * - Google security alerts
+ * - Job alerts
+ * - Other personal emails
+ *
+ * from becoming support tickets.
+ */
+function isSupportEmail(
+  fromEmail: string,
+  toEmail: string,
+  subject: string,
+  body: string
+): boolean {
+  const supportMailbox =
+    (process.env.EMAIL_FROM || '')
+      .trim()
+      .toLowerCase();
+
+  const normalizedFromEmail =
+    fromEmail.trim().toLowerCase();
+
+  const normalizedToEmail =
+    toEmail.trim().toLowerCase();
+
+  // Ignore emails sent by our own support mailbox.
+  //
+  // Example:
+  // From: bajivali400@gmail.com
+  // Subject: Ticket SW-000004 - Resolution Confirmation
+  //
+  // These are outgoing emails from our system,
+  // not new customer support requests.
+  if (
+    supportMailbox &&
+    normalizedFromEmail === supportMailbox
+  ) {
+    return false;
+  }
+
+  // Email must be addressed to our support mailbox.
+  if (
+    supportMailbox &&
+    normalizedToEmail !== supportMailbox
+  ) {
+    return false;
+  }
+
+  const combinedText =
+    `${subject}\n${body}`;
+
+  // Recognizable support-ticket fields.
+  const hasMacId =
+    /(?:MAC\s*ID|MAC\s*ADDRESS|MAC)\s*:/i.test(
+      combinedText
+    );
+
+  const hasIssueDescription =
+    /(?:Issue\s*Description|Issue|Problem|Problem\s*Description)\s*:/i.test(
+      combinedText
+    );
+
+  const hasReferenceNumber =
+    /(?:Reference\s*Number|Reference\s*No|Reference|Ref\s*Number|Ref\s*No)\s*:/i.test(
+      combinedText
+    );
+
+  return (
+    hasMacId ||
+    hasIssueDescription ||
+    hasReferenceNumber
+  );
+}
+
 function decodeBase64Url(data: string): string {
   const normalized = data
     .replace(/-/g, '+')
@@ -50,7 +152,9 @@ function extractBody(payload: any): string {
     payload.mimeType === 'text/plain' &&
     payload.body?.data
   ) {
-    return decodeBase64Url(payload.body.data);
+    return decodeBase64Url(
+      payload.body.data
+    );
   }
 
   // Multipart email
@@ -61,7 +165,9 @@ function extractBody(payload: any): string {
         part.mimeType === 'text/plain' &&
         part.body?.data
       ) {
-        return decodeBase64Url(part.body.data);
+        return decodeBase64Url(
+          part.body.data
+        );
       }
     }
 
@@ -77,7 +183,9 @@ function extractBody(payload: any): string {
 
   // Fallback to any available body
   if (payload.body?.data) {
-    return decodeBase64Url(payload.body.data);
+    return decodeBase64Url(
+      payload.body.data
+    );
   }
 
   return '';
@@ -107,7 +215,10 @@ async function getGmailClient() {
   }
 
   const credentials = JSON.parse(
-    fs.readFileSync(credentialsPath, 'utf-8')
+    fs.readFileSync(
+      credentialsPath,
+      'utf-8'
+    )
   );
 
   const installed =
@@ -120,14 +231,18 @@ async function getGmailClient() {
     );
   }
 
-  const oauth2Client = new google.auth.OAuth2(
-    installed.client_id,
-    installed.client_secret,
-    installed.redirect_uris?.[0]
-  );
+  const oauth2Client =
+    new google.auth.OAuth2(
+      installed.client_id,
+      installed.client_secret,
+      installed.redirect_uris?.[0]
+    );
 
   const token = JSON.parse(
-    fs.readFileSync(tokenPath, 'utf-8')
+    fs.readFileSync(
+      tokenPath,
+      'utf-8'
+    )
   );
 
   oauth2Client.setCredentials(token);
@@ -153,12 +268,16 @@ export type GmailInboundMessage = {
 export async function fetchInboundGmailMessages(): Promise<
   GmailInboundMessage[]
 > {
-  const gmail = await getGmailClient();
+  const gmail =
+    await getGmailClient();
 
   const listResponse =
     await gmail.users.messages.list({
       userId: 'me',
+
+      // Read only inbox messages.
       q: 'in:inbox',
+
       maxResults: 20,
     });
 
@@ -179,10 +298,9 @@ export async function fetchInboundGmailMessages(): Promise<
         format: 'full',
       });
 
-    const message = messageResponse.data;
+    const message =
+      messageResponse.data;
 
-    // Gmail API can technically return a nullable ID,
-    // so explicitly verify it before using it.
     if (!message.id) {
       continue;
     }
@@ -190,34 +308,71 @@ export async function fetchInboundGmailMessages(): Promise<
     const headers =
       (message.payload?.headers || []) as GmailHeader[];
 
-    const fromEmail = getHeader(
-      headers,
-      'From'
-    );
+    const rawFromEmail =
+      getHeader(
+        headers,
+        'From'
+      );
 
-    const toEmail = getHeader(
-      headers,
-      'To'
-    );
+    const rawToEmail =
+      getHeader(
+        headers,
+        'To'
+      );
 
-    const cc = getHeader(
-      headers,
-      'Cc'
-    );
+    const fromEmail =
+      extractEmailAddress(
+        rawFromEmail
+      );
 
-    const subject = getHeader(
-      headers,
-      'Subject'
-    );
+    const toEmail =
+      extractEmailAddress(
+        rawToEmail
+      );
 
-    const body = extractBody(
-      message.payload
+    const cc =
+      getHeader(
+        headers,
+        'Cc'
+      );
+
+    const subject =
+      getHeader(
+        headers,
+        'Subject'
+      );
+
+    const body =
+      extractBody(
+        message.payload
+      );
+
+    // Ignore unrelated emails.
+    if (
+      !isSupportEmail(
+        fromEmail,
+        toEmail,
+        subject,
+        body
+      )
+    ) {
+      console.log(
+        `FILTERED: ${message.id} - ${subject}`
+      );
+
+      continue;
+    }
+
+    console.log(
+      `ACCEPTED: ${message.id} - ${subject}`
     );
 
     results.push({
       id: message.id,
-      threadId: message.threadId || null,
-      providerMessageId: message.id,
+      threadId:
+        message.threadId || null,
+      providerMessageId:
+        message.id,
       fromEmail,
       toEmail,
       cc,
