@@ -10,14 +10,19 @@ export function createApp() {
   const app = express();
 
   app.use(helmet());
+
   app.use(
     cors({
       origin: env.FRONTEND_URL,
       credentials: true,
     })
   );
+
   app.use(express.json({ limit: '2mb' }));
-  app.use(morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev'));
+
+  app.use(
+    morgan(env.NODE_ENV === 'production' ? 'combined' : 'dev')
+  );
 
   app.use('/api', apiRouter);
 
@@ -26,3 +31,8 @@ export function createApp() {
 
   return app;
 }
+
+// Vercel serverless entry point
+const app = createApp();
+
+export default app;
