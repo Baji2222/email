@@ -1,2 +1,6 @@
 credentials.json
 token.json
+.vercel
+.env*
+
+gmail-cron-secret.txt

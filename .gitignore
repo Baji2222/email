@@ -8,3 +8,6 @@ coverage/
 backend/credentials.json
 backend/token.json
 *.tsbuildinfo
+
+.vercel
+.env*
